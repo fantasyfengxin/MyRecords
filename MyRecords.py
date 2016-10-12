@@ -1,5 +1,7 @@
+import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text
+from collections import OrderedDict
 
 class Row(object):
     """One row from a SQL query."""
@@ -35,9 +37,21 @@ class Row(object):
 
         raise KeyError('Invalid key.')
 
-    def as_dict(self):
+    def __repr__(self):
+        return '<Record {} >'.format(self.as_dict(True))
+
+    def as_dict(self, ordered=False):
         """Merge the keys and values as a dict"""
+        if ordered:
+            return OrderedDict(zip(self.keys, self.values))
         return dict(zip(self.keys, self.values))
+
+    def dataframe(self):
+        """Tranform a row to pandas dataframe."""
+        dictionary = OrderedDict(zip(self.keys, [[value] for value in self.values]))
+        dataframe = pd.DataFrame(dictionary)
+        return dataframe
+
 
 class RowsCollection(object):
     """A collection of all rows from a SQL query."""
@@ -45,9 +59,13 @@ class RowsCollection(object):
     def __init__(self, rows):
         self.records = rows
         self.all_records = []
+        self.pending = True
 
     def __len__(self):
         return len(self.all_records)
+
+    def __repr__(self):
+        return '<RowsCollection length = {} pending = {}>'.format(len(self), self.pending)
     
     def next(self):
         return self.__next__()
@@ -59,6 +77,7 @@ class RowsCollection(object):
             self.all_records.append(next_record)
             return next_record
         except StopIteration:
+            self.pending = False
             raise StopIteration('At the end of the result set.')
 
     def __iter__(self):
@@ -85,6 +104,18 @@ class RowsCollection(object):
         while key.stop >= len(self.all_records):
             self.next()
         return RowsCollection(iter(self.all_records[key]))
+ 
+    def dataframe(self):
+        """Transform cached rows into pandas dataframe."""
+        if not self.all_records:
+            print('No rows cached.')
+            return
+        dict_list = [row.as_dict() for row in self.all_records]
+        columns = self.all_records[0].keys
+        dataframe = pd.DataFrame(dict_list, columns=columns)
+        return dataframe
+
+
 
 class Connection(object):
     """ A database connection"""
@@ -123,7 +154,6 @@ class Connection(object):
         except Exception as e:  
             raise e("SQL execution error!")
         
-        #return res_cursor
         rows = (Row(res_cursor.keys(), record) for record in res_cursor)
         results = RowsCollection(rows)
         return results
